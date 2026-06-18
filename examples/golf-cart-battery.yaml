@@ -1,0 +1,116 @@
+esphome:
+  name: golf-cart-battery1
+  friendly_name: Golf Cart Battery 1
+  min_version: 2026.4.0
+  name_add_mac_suffix: false
+
+external_components:
+  - source:
+      type: local
+      path: /config/esphome/components
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: WARN
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+esp32_ble_tracker:
+
+ble_client:
+  - mac_address: 10:23:81:BC:04:87
+    id: eco_battery_client
+
+eco_battery:
+  ble_client_id: eco_battery_client
+  update_interval: 30s
+  connected_sensor: eco_connected
+  soc_sensor: eco_soc
+  voltage_sensor: eco_voltage
+  mos_temp_sensor: eco_mos_temp
+  cell_temp_sensor: eco_cell_temp
+  current_sensor: eco_current
+  max_cell_voltage_sensor: eco_max_cell_voltage
+  min_cell_voltage_sensor: eco_min_cell_voltage
+  cell_delta_sensor: eco_cell_delta
+  cell_count_sensor: eco_cell_count
+  temp_probe1_sensor: eco_temp_probe1
+  temp_probe2_sensor: eco_temp_probe2
+  temp_probe3_sensor: eco_temp_probe3
+
+sensor:
+  - platform: template
+    id: eco_soc
+    name: "Eco Battery SOC"
+    unit_of_measurement: "%"
+    device_class: battery
+  - platform: template
+    id: eco_voltage
+    name: "Eco Battery Voltage"
+    unit_of_measurement: "V"
+    device_class: voltage
+  - platform: template
+    id: eco_mos_temp
+    name: "Eco Battery MOS Temperature"
+    unit_of_measurement: "°C"
+    device_class: temperature
+  - platform: template
+    id: eco_cell_temp
+    name: "Eco Battery Cell Temperature"
+    unit_of_measurement: "°C"
+    device_class: temperature
+  - platform: template
+    id: eco_current
+    name: "Eco Battery Current"
+    unit_of_measurement: "A"
+    device_class: current
+  - platform: template
+    id: eco_max_cell_voltage
+    name: "Eco Battery Max Cell Voltage"
+    unit_of_measurement: "V"
+    device_class: voltage
+  - platform: template
+    id: eco_min_cell_voltage
+    name: "Eco Battery Min Cell Voltage"
+    unit_of_measurement: "V"
+    device_class: voltage
+  - platform: template
+    id: eco_cell_delta
+    name: "Eco Battery Cell Delta"
+    unit_of_measurement: "V"
+    icon: mdi:battery-sync
+  - platform: template
+    id: eco_cell_count
+    name: "Eco Battery Cell Count"
+    icon: mdi:battery-outline
+  - platform: template
+    id: eco_temp_probe1
+    name: "Eco Battery Temp Probe 1"
+    unit_of_measurement: "°C"
+    device_class: temperature
+  - platform: template
+    id: eco_temp_probe2
+    name: "Eco Battery Temp Probe 2"
+    unit_of_measurement: "°C"
+    device_class: temperature
+  - platform: template
+    id: eco_temp_probe3
+    name: "Eco Battery Temp Probe 3"
+    unit_of_measurement: "°C"
+    device_class: temperature
+
+binary_sensor:
+  - platform: template
+    id: eco_connected
+    name: "Eco Battery Connected"
