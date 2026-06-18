@@ -33,7 +33,7 @@ Bluetooth enabled
 external_components:
   - source:
       type: git
-      url: https://github.com/YOUR_USERNAME/esphome-eco-battery
+      url: https://github.com/jayg37/esphome-eco-battery
 
 ## Example yaml for ESP device
 ```yaml
@@ -45,8 +45,9 @@ esphome:
 
 external_components:
   - source:
-      type: local
-      path: /config/esphome/components
+      type: git
+      url: https://github.com/jayg37/esphome-eco-battery
+      ref: v1.0.0 
 
 esp32:
   board: esp32-s3-devkitc-1
