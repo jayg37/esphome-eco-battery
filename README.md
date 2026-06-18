@@ -29,11 +29,8 @@ ESPHome 2026.5+
 Bluetooth enabled
 
 ## Installation
-```yaml
-external_components:
-  - source:
-      type: git
-      url: https://github.com/jayg37/esphome-eco-battery
+Install is easy. Commision your new ESP device via ESP web (https://web.esphome.io/?dashboard_wizard) or your local ESPHome instance or IDE..etc. Then when you've got the new device to show up in your ESPHome instance simply edit the device and copy/paste the device yaml below. Click install and it will pull the necessary components from github then compile and install on your device. You're now ready to go! 
+Remove components you are not interested in seeing from the sensor lists below. Additionally the interval at which data is pulled from your BMS can be adjusted via the yaml below. Look for "update_interval: 30s" and modify to your needs. 30s, 1min, 5min, 10min, 1hr
 
 ## Example yaml for ESP device
 ```yaml
