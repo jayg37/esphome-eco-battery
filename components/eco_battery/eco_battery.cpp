@@ -11,6 +11,7 @@ static bool notify_enabled = false;
 
 static std::vector<uint8_t> rx_buffer;
 static uint32_t last_rx_ms = 0;
+static bool watchdog_warning_sent = false;
 //
 // Confirmed Register Map
 //
@@ -176,6 +177,32 @@ void EcoBattery::loop() {
         rx_buffer.clear();
     }
 
+        //
+        // Watchdog - verify BLE notifications are still arriving
+        //
+        if (last_rx_ms != 0) {
+    
+            uint32_t age = millis() - last_rx_ms;
+    
+            if (age > (this->update_interval_ms_ * 3)) {
+    
+                if (!watchdog_warning_sent) {
+    
+                    ESP_LOGW(
+                        TAG,
+                        "Battery communication stalled (%u ms since last notification)",
+                        (unsigned) age);
+    
+                    watchdog_warning_sent = true;
+                }
+    
+            } else {
+    
+                watchdog_warning_sent = false;
+            }
+        }
+
+
     //
     // Poll battery every 10 minutes
     //
@@ -277,6 +304,8 @@ void EcoBattery::gattc_event_handler(
         
             notify_enabled = false;
             rx_buffer.clear();
+            last_rx_ms = 0;
+            watchdog_warning_sent = false;
             break;
 
         case ESP_GATTC_SEARCH_CMPL_EVT: {
@@ -323,6 +352,7 @@ void EcoBattery::gattc_event_handler(
                 notify.value + notify.value_len);
 
             last_rx_ms = millis();
+            watchdog_warning_sent = false;
             break;
         }
 
