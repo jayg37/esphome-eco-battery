@@ -29,7 +29,7 @@ wifi:
 esp32_ble_tracker:
 
 ble_client:
-  - mac_address: XX:XX:XX:XX:XX:XX //Update MAC address to your ESPdevice MAC
+  - mac_address: XX:XX:XX:XX:XX:XX #Update MAC address to your ESPdevice MAC
     id: eco_battery_client
 
 eco_battery:
