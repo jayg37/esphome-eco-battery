@@ -27,6 +27,19 @@ static void clear_rx_state() {
   last_rx_ms = 0;
 }
 
+void EcoBattery::dump_config() {
+  ESP_LOGCONFIG(TAG, "Eco Battery:");
+  ESP_LOGCONFIG(TAG, "  Update interval: %u ms", (unsigned) this->update_interval_ms_);
+  if (this->parent_ == nullptr) {
+    ESP_LOGCONFIG(TAG, "  BLE client: NULL");
+  } else {
+    ESP_LOGCONFIG(TAG, "  BLE client: configured");
+    ESP_LOGCONFIG(TAG, "  BLE state: %s",
+                  ble_client::espbt::client_state_to_string(this->parent_->state()));
+    ESP_LOGCONFIG(TAG, "  BLE connected: %s", this->parent_->connected() ? "YES" : "NO");
+  }
+}
+
 void EcoBattery::setup() {
   this->last_poll_ = millis() - this->update_interval_ms_;
   this->poll_pending_ = false;
@@ -36,10 +49,43 @@ void EcoBattery::setup() {
   this->write_char_handle_ = 0;
   this->notify_char_handle_ = 0;
   this->notify_desc_handle_ = 0;
+  this->debug_last_loop_log_ms_ = millis();
+  this->debug_loop_count_ = 0;
+
+  ESP_LOGI(TAG, "SETUP: EcoBattery initialized (interval=%u ms)",
+           (unsigned) this->update_interval_ms_);
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(TAG, "SETUP: BLE parent is NULL");
+  } else {
+    ESP_LOGI(TAG, "SETUP: BLE parent attached; state=%s connected=%s",
+             ble_client::espbt::client_state_to_string(this->parent_->state()),
+             this->parent_->connected() ? "YES" : "NO");
+  }
 }
 
 void EcoBattery::loop() {
   const uint32_t now = millis();
+  this->debug_loop_count_++;
+
+  // Throttled lifecycle heartbeat. This is intentionally INFO-level so a field
+  // log immediately shows whether EcoBattery::loop() is actually running.
+  if ((now - this->debug_last_loop_log_ms_) >= 30000) {
+    this->debug_last_loop_log_ms_ = now;
+    if (this->parent_ == nullptr) {
+      ESP_LOGI(TAG, "LOOP: alive count=%u parent=NULL pending=%s active=%s",
+               (unsigned) this->debug_loop_count_,
+               this->poll_pending_ ? "YES" : "NO",
+               this->poll_active_ ? "YES" : "NO");
+    } else {
+      ESP_LOGI(TAG, "LOOP: alive count=%u state=%s connected=%s pending=%s active=%s rx=%u",
+               (unsigned) this->debug_loop_count_,
+               ble_client::espbt::client_state_to_string(this->parent_->state()),
+               this->parent_->connected() ? "YES" : "NO",
+               this->poll_pending_ ? "YES" : "NO",
+               this->poll_active_ ? "YES" : "NO",
+               (unsigned) rx_buffer.size());
+    }
+  }
 
   if (this->poll_active_ && this->poll_started_ms_ != 0 &&
       (now - this->poll_started_ms_) > RESPONSE_TIMEOUT_MS) {
@@ -133,22 +179,27 @@ void EcoBattery::loop() {
     this->last_poll_ = now;
 
     if (this->parent_ == nullptr) {
-      ESP_LOGE(TAG, "PARENT NULL");
+      ESP_LOGE(TAG, "POLL: parent BLE client is NULL");
       return;
     }
 
     if (this->parent_->connected()) {
-      ESP_LOGW(TAG, "BMS already connected at poll time; using existing connection");
+      ESP_LOGW(TAG, "POLL: BLE client already connected; using existing connection");
       this->poll_pending_ = true;
       return;
     }
 
     if (this->parent_->state() == ble_client::espbt::ClientState::IDLE) {
-      ESP_LOGI(TAG, "Poll due; connecting to Eco Battery BMS");
+      ESP_LOGI(TAG, "POLL: due; state=%s connected=%s -> calling connect()",
+               ble_client::espbt::client_state_to_string(this->parent_->state()),
+               this->parent_->connected() ? "YES" : "NO");
       this->poll_pending_ = true;
       this->parent_->connect();
+      ESP_LOGD(TAG, "POLL: connect() returned; state=%s connected=%s",
+               ble_client::espbt::client_state_to_string(this->parent_->state()),
+               this->parent_->connected() ? "YES" : "NO");
     } else {
-      ESP_LOGD(TAG, "Poll due but BLE client is in %s; retrying next interval",
+      ESP_LOGW(TAG, "POLL: due but BLE client is in %s; retrying next interval",
                ble_client::espbt::client_state_to_string(this->parent_->state()));
       this->last_poll_ = now;
     }
@@ -219,13 +270,15 @@ void EcoBattery::gattc_event_handler(
 
   switch (event) {
     case ESP_GATTC_CONNECT_EVT:
-      ESP_LOGI(TAG, "CONNECTED");
+      ESP_LOGI(TAG, "GATT EVENT: CONNECTED (if=%d conn_id=%d)",
+               gattc_if, param->connect.conn_id);
       if (this->connected_sensor_ != nullptr)
         this->connected_sensor_->publish_state(true);
       break;
 
     case ESP_GATTC_DISCONNECT_EVT:
-      ESP_LOGW(TAG, "DISCONNECTED");
+      ESP_LOGW(TAG, "GATT EVENT: DISCONNECTED (if=%d reason=%d)",
+               gattc_if, param->disconnect.reason);
       if (this->connected_sensor_ != nullptr)
         this->connected_sensor_->publish_state(false);
       this->publish_unavailable_();
@@ -240,10 +293,13 @@ void EcoBattery::gattc_event_handler(
       break;
 
     case ESP_GATTC_SEARCH_CMPL_EVT: {
-      ESP_LOGI(TAG, "SERVICE SEARCH COMPLETE");
+      ESP_LOGI(TAG, "GATT EVENT: SERVICE SEARCH COMPLETE");
 
+      ESP_LOGD(TAG, "DISCOVERY: looking for service 0x%04X", BMS_SERVICE_UUID);
       auto *service = this->parent_->get_service(BMS_SERVICE_UUID);
       if (service == nullptr) {
+        ESP_LOGE(TAG, "DISCOVERY: service lookup failed; BLE state=%s",
+                 ble_client::espbt::client_state_to_string(this->parent_->state()));
         ESP_LOGE(TAG, "BMS service 0x%04X not found", BMS_SERVICE_UUID);
         this->poll_pending_ = false;
         this->parent_->disconnect();
@@ -253,9 +309,14 @@ void EcoBattery::gattc_event_handler(
       // Use handle-based characteristic discovery across the discovered GATT cache.
       // This matches the working main-branch implementation and avoids relying on
       // the service/characteristic UUID cache lookup during SEARCH_CMPL_EVT.
+      ESP_LOGD(TAG, "DISCOVERY: service found; looking for notify=0x%04X write=0x%04X",
+               BMS_NOTIFY_CHAR_UUID, BMS_WRITE_CHAR_UUID);
       auto *notify_char = this->parent_->get_characteristic(BMS_NOTIFY_CHAR_UUID);
       auto *write_char = this->parent_->get_characteristic(BMS_WRITE_CHAR_UUID);
 
+      ESP_LOGD(TAG, "DISCOVERY: notify=%s write=%s",
+               notify_char != nullptr ? "FOUND" : "MISSING",
+               write_char != nullptr ? "FOUND" : "MISSING");
       if (notify_char == nullptr || write_char == nullptr) {
         ESP_LOGE(TAG, "BMS characteristics not found (notify=0x%04X write=0x%04X)",
                  BMS_NOTIFY_CHAR_UUID, BMS_WRITE_CHAR_UUID);
@@ -267,6 +328,8 @@ void EcoBattery::gattc_event_handler(
       auto *notify_desc =
           this->parent_->get_descriptor(BMS_SERVICE_UUID, BMS_NOTIFY_CHAR_UUID, BMS_NOTIFY_DESC_UUID);
 
+      ESP_LOGD(TAG, "DISCOVERY: notification descriptor lookup result=%s",
+               notify_desc != nullptr ? "FOUND" : "MISSING");
       if (notify_desc == nullptr) {
         ESP_LOGE(TAG, "BMS notification descriptor 0x%04X not found", BMS_NOTIFY_DESC_UUID);
         this->poll_pending_ = false;
@@ -278,6 +341,11 @@ void EcoBattery::gattc_event_handler(
       this->write_char_handle_ = write_char->handle;
       this->notify_desc_handle_ = notify_desc->handle;
 
+      ESP_LOGI(TAG, "DISCOVERY: handles notify=0x%04X write=0x%04X desc=0x%04X",
+               this->notify_char_handle_, this->write_char_handle_, this->notify_desc_handle_);
+
+      ESP_LOGD(TAG, "DISCOVERY: registering for notifications on handle 0x%04X",
+               this->notify_char_handle_);
       const esp_err_t err = this->parent_->register_for_notify(this->notify_char_handle_);
       if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register for BMS notifications: %s",
@@ -288,10 +356,13 @@ void EcoBattery::gattc_event_handler(
       }
 
       notify_enabled = true;
+      ESP_LOGD(TAG, "DISCOVERY: register_for_notify() returned %s", esp_err_to_name(err));
       break;
     }
 
     case ESP_GATTC_REG_FOR_NOTIFY_EVT:
+      ESP_LOGD(TAG, "GATT EVENT: REG_FOR_NOTIFY status=%d handle=0x%04X",
+               param->reg_for_notify.status, param->reg_for_notify.handle);
       if (param->reg_for_notify.status != ESP_GATT_OK) {
         ESP_LOGE(TAG, "BMS notification registration failed: status=%d",
                  param->reg_for_notify.status);
@@ -300,7 +371,7 @@ void EcoBattery::gattc_event_handler(
         break;
       }
 
-      ESP_LOGD(TAG, "BMS notification registration complete");
+      ESP_LOGI(TAG, "GATT EVENT: notification registration complete");
 
       if (this->notify_desc_handle_ == 0) {
         ESP_LOGE(TAG, "BMS notification descriptor handle is unavailable");
@@ -330,6 +401,8 @@ void EcoBattery::gattc_event_handler(
       break;
 
     case ESP_GATTC_WRITE_DESCR_EVT:
+      ESP_LOGD(TAG, "GATT EVENT: WRITE_DESCR status=%d handle=0x%04X",
+               param->write.status, param->write.handle);
       if (param->write.status != ESP_GATT_OK) {
         ESP_LOGE(TAG, "BMS notification descriptor write failed: status=%d",
                  param->write.status);
@@ -338,12 +411,14 @@ void EcoBattery::gattc_event_handler(
         break;
       }
 
-      ESP_LOGD(TAG, "BMS notifications enabled");
+      ESP_LOGI(TAG, "GATT EVENT: BMS notifications enabled; sending request");
       this->node_state = ble_client::espbt::ClientState::ESTABLISHED;
       this->send_bms_request_();
       break;
 
     case ESP_GATTC_NOTIFY_EVT: {
+      ESP_LOGD(TAG, "GATT EVENT: NOTIFY handle=0x%04X len=%u",
+               param->notify.handle, (unsigned) param->notify.value_len);
       auto &notify = param->notify;
       if (notify.handle != this->notify_char_handle_) {
         ESP_LOGD(TAG, "Ignoring notification from unexpected handle 0x%04X",
@@ -362,11 +437,14 @@ void EcoBattery::gattc_event_handler(
     }
 
     case ESP_GATTC_WRITE_CHAR_EVT:
+      ESP_LOGD(TAG, "GATT EVENT: WRITE_CHAR status=%d handle=0x%04X",
+               param->write.status, param->write.handle);
       if (this->poll_active_)
         ESP_LOGD(TAG, "BMS request write acknowledged");
       break;
 
     default:
+      ESP_LOGV(TAG, "GATT EVENT: event=%d", event);
       break;
   }
 }
