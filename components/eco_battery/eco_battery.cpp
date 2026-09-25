@@ -12,8 +12,10 @@ static constexpr uint16_t BMS_SERVICE_UUID = 0xFF00;
 static constexpr uint16_t BMS_NOTIFY_CHAR_UUID = 0x0011;
 static constexpr uint16_t BMS_WRITE_CHAR_UUID = 0x0014;
 static constexpr uint16_t BMS_NOTIFY_DESC_UUID = 0x0012;
+
 static constexpr size_t BMS_REGISTER_COUNT = 122;
 static constexpr size_t BMS_FRAME_SIZE = 3 + (BMS_REGISTER_COUNT * 2);
+static constexpr uint32_t RESPONSE_TIMEOUT_MS = 30000;
 
 static bool notify_enabled = false;
 static std::vector<uint8_t> rx_buffer;
@@ -26,31 +28,50 @@ static void clear_rx_state() {
 }
 
 void EcoBattery::setup() {
+  // Run the first poll immediately after boot.
   this->last_poll_ = millis() - this->update_interval_ms_;
   this->poll_pending_ = false;
   this->poll_active_ = false;
   this->disconnect_pending_ = false;
-  this->response_received_ = false;
+  this->poll_started_ms_ = 0;
+  this->write_char_handle_ = 0;
+  this->notify_char_handle_ = 0;
+  this->notify_desc_handle_ = 0;
 }
 
 void EcoBattery::loop() {
   const uint32_t now = millis();
 
-  // A complete response is expected to contain 122 registers:
-  // 3 protocol bytes + 244 payload bytes = 247 bytes minimum.
+  // If a poll is active but no complete response arrives, don't leave the
+  // BLE client connected indefinitely.
+  if (this->poll_active_ && this->poll_started_ms_ != 0 &&
+      (now - this->poll_started_ms_) > RESPONSE_TIMEOUT_MS) {
+    ESP_LOGW(TAG, "BMS response timeout after %u ms; disconnecting",
+             (unsigned) (now - this->poll_started_ms_));
+    this->poll_active_ = false;
+    this->poll_pending_ = false;
+    this->disconnect_pending_ = true;
+    rx_buffer.clear();
+    if (this->parent_ != nullptr && this->parent_->connected())
+      this->parent_->disconnect();
+    return;
+  }
+
+  // Wait for the notification stream to go quiet before treating the
+  // fragmented notifications as one complete response.
   if (!rx_buffer.empty() && (now - last_rx_ms) > 100) {
     if (rx_buffer.size() < BMS_FRAME_SIZE) {
       ESP_LOGW(TAG, "Incomplete BMS response: received %u bytes, expected at least %u",
                (unsigned) rx_buffer.size(), (unsigned) BMS_FRAME_SIZE);
+
       rx_buffer.clear();
-      if (this->poll_active_) {
-        this->poll_active_ = false;
-        this->poll_pending_ = false;
-        this->disconnect_pending_ = true;
-        if (this->parent_ != nullptr && this->parent_->connected()) {
-          ESP_LOGW(TAG, "Disconnecting after incomplete BMS response");
-          this->parent_->disconnect();
-        }
+      this->poll_active_ = false;
+      this->poll_pending_ = false;
+      this->disconnect_pending_ = true;
+
+      if (this->parent_ != nullptr && this->parent_->connected()) {
+        ESP_LOGW(TAG, "Disconnecting after incomplete BMS response");
+        this->parent_->disconnect();
       }
     } else {
       uint16_t regs[BMS_REGISTER_COUNT];
@@ -62,12 +83,11 @@ void EcoBattery::loop() {
       }
 
       const float soc = static_cast<float>(regs[5]);
-      if (this->soc_sensor_ != nullptr)
-        this->soc_sensor_->publish_state(soc);
 
       float voltage = 0.0f;
       float max_cell_voltage = 0.0f;
       float min_cell_voltage = 100.0f;
+
       for (int i = 33; i <= 48; i++) {
         const float v = static_cast<float>(regs[i]) / 1000.0f;
         voltage += v;
@@ -77,35 +97,30 @@ void EcoBattery::loop() {
           min_cell_voltage = v;
       }
 
+      const float mos_temp = static_cast<float>(regs[22]);
+      const float cell_temp = static_cast<float>(regs[23]);
+      const float current = static_cast<int16_t>(regs[4]) / 10.0f;
+      const float cell_delta = max_cell_voltage - min_cell_voltage;
+      const float cell_count = static_cast<float>(regs[2]);
+
+      if (this->soc_sensor_ != nullptr)
+        this->soc_sensor_->publish_state(soc);
       if (this->voltage_sensor_ != nullptr)
         this->voltage_sensor_->publish_state(voltage);
-
-      const float mos_temp = static_cast<float>(regs[22]);
       if (this->mos_temp_sensor_ != nullptr)
         this->mos_temp_sensor_->publish_state(mos_temp);
-
-      const float cell_temp = static_cast<float>(regs[23]);
       if (this->cell_temp_sensor_ != nullptr)
         this->cell_temp_sensor_->publish_state(cell_temp);
-
-      const float current = static_cast<int16_t>(regs[4]) / 10.0f;
       if (this->current_sensor_ != nullptr)
         this->current_sensor_->publish_state(current);
-
       if (this->max_cell_voltage_sensor_ != nullptr)
         this->max_cell_voltage_sensor_->publish_state(max_cell_voltage);
-
       if (this->min_cell_voltage_sensor_ != nullptr)
         this->min_cell_voltage_sensor_->publish_state(min_cell_voltage);
-
-      const float cell_delta = max_cell_voltage - min_cell_voltage;
       if (this->cell_delta_sensor_ != nullptr)
         this->cell_delta_sensor_->publish_state(cell_delta);
-
-      const float cell_count = static_cast<float>(regs[2]);
       if (this->cell_count_sensor_ != nullptr)
         this->cell_count_sensor_->publish_state(cell_count);
-
       if (this->temp_probe1_sensor_ != nullptr)
         this->temp_probe1_sensor_->publish_state(static_cast<float>(regs[23]));
       if (this->temp_probe2_sensor_ != nullptr)
@@ -119,20 +134,19 @@ void EcoBattery::loop() {
 
       rx_buffer.clear();
       last_rx_ms = 0;
-      this->response_received_ = true;
       this->poll_active_ = false;
       this->poll_pending_ = false;
+      this->poll_started_ms_ = 0;
 
       if (this->parent_ != nullptr && this->parent_->connected()) {
         this->disconnect_pending_ = true;
-        ESP_LOGD(TAG, "Poll complete; disconnecting from BMS");
+        ESP_LOGI(TAG, "Poll complete; disconnecting from BMS");
         this->parent_->disconnect();
       }
     }
   }
 
-  // Start a new poll when due. With auto_connect disabled, connect() is only
-  // requested when a poll is actually due.
+  // Start a new poll only when the configured interval expires.
   if (!this->poll_pending_ && !this->poll_active_ &&
       (now - this->last_poll_) >= this->update_interval_ms_) {
     this->last_poll_ = now;
@@ -143,19 +157,22 @@ void EcoBattery::loop() {
     }
 
     if (this->parent_->connected()) {
-      ESP_LOGD(TAG, "BMS already connected at poll time; beginning poll");
+      ESP_LOGW(TAG, "BMS already connected at poll time; using existing connection");
       this->poll_pending_ = true;
-      this->poll_active_ = true;
       this->response_received_ = false;
-    } else if (this->parent_->state() == esp32_ble_tracker::ClientState::IDLE) {
+      return;
+    }
+
+    if (this->parent_->state() == espbt::ClientState::IDLE) {
       ESP_LOGI(TAG, "Poll due; connecting to Eco Battery BMS");
       this->poll_pending_ = true;
       this->response_received_ = false;
       this->parent_->connect();
     } else {
-      ESP_LOGD(TAG, "Poll due but BMS client is in %s; will retry next interval",
-               esp32_ble_tracker::client_state_to_string(this->parent_->state()));
-      this->last_poll_ = now - this->update_interval_ms_ + 5000;
+      ESP_LOGD(TAG, "Poll due but BLE client is in %s; retrying next interval",
+               espbt::client_state_to_string(this->parent_->state()));
+      // Give the client another chance on the next normal interval.
+      this->last_poll_ = now;
     }
   }
 }
@@ -166,10 +183,8 @@ void EcoBattery::send_bms_request_() {
     return;
   }
 
-  auto *chr = this->parent_->get_characteristic(BMS_SERVICE_UUID, BMS_WRITE_CHAR_UUID);
-  if (chr == nullptr) {
-    ESP_LOGE(TAG, "BMS write characteristic 0x%04X not found in service 0x%04X",
-             BMS_WRITE_CHAR_UUID, BMS_SERVICE_UUID);
+  if (this->write_char_handle_ == 0) {
+    ESP_LOGE(TAG, "BMS write characteristic handle is not available");
     this->poll_active_ = false;
     this->poll_pending_ = false;
     this->disconnect_pending_ = true;
@@ -179,14 +194,22 @@ void EcoBattery::send_bms_request_() {
 
   rx_buffer.clear();
   last_rx_ms = 0;
-  this->response_received_ = false;
+  this->poll_started_ms_ = millis();
   this->poll_active_ = true;
 
   const uint8_t cmd[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x7A, 0xC4, 0x29};
-  ESP_LOGD(TAG, "Sending BMS request on characteristic 0x%04X (%u bytes)",
-           BMS_WRITE_CHAR_UUID, (unsigned) sizeof(cmd));
 
-  const esp_err_t err = chr->write_value(cmd, sizeof(cmd));
+  ESP_LOGD(TAG, "Sending BMS request: 01 03 00 00 00 7A C4 29");
+
+  const esp_err_t err = esp_ble_gattc_write_char(
+      this->parent_->get_gattc_if(),
+      this->parent_->get_conn_id(),
+      this->write_char_handle_,
+      sizeof(cmd),
+      const_cast<uint8_t *>(cmd),
+      ESP_GATT_WRITE_TYPE_RSP,
+      ESP_GATT_AUTH_REQ_NONE);
+
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "BMS request write failed: %s", esp_err_to_name(err));
     this->poll_active_ = false;
@@ -223,9 +246,11 @@ void EcoBattery::publish_unavailable_() {
     this->temp_probe3_sensor_->publish_state(NAN);
 }
 
-void EcoBattery::gattc_event_handler(esp_gattc_cb_event_t event,
-                                      esp_gatt_if_t gattc_if,
-                                      esp_ble_gattc_cb_param_t *param) {
+void EcoBattery::gattc_event_handler(
+    esp_gattc_cb_event_t event,
+    esp_gatt_if_t gattc_if,
+    esp_ble_gattc_cb_param_t *param) {
+
   switch (event) {
     case ESP_GATTC_CONNECT_EVT:
       ESP_LOGI(TAG, "CONNECTED");
@@ -235,56 +260,153 @@ void EcoBattery::gattc_event_handler(esp_gattc_cb_event_t event,
 
     case ESP_GATTC_DISCONNECT_EVT:
       ESP_LOGW(TAG, "DISCONNECTED");
+
       if (this->connected_sensor_ != nullptr)
         this->connected_sensor_->publish_state(false);
+
       this->publish_unavailable_();
+
       this->poll_active_ = false;
       this->poll_pending_ = false;
       this->disconnect_pending_ = false;
+      this->poll_started_ms_ = 0;
+
+      this->write_char_handle_ = 0;
+      this->notify_char_handle_ = 0;
+      this->notify_desc_handle_ = 0;
+
       clear_rx_state();
       break;
 
-    case ESP_GATTC_SEARCH_CMPL_EVT:
+    case ESP_GATTC_SEARCH_CMPL_EVT: {
       ESP_LOGI(TAG, "SERVICE SEARCH COMPLETE");
 
-      if (!notify_enabled) {
-        notify_enabled = true;
-        const esp_err_t err = this->parent_->register_for_notify(0x0011);
-        if (err != ESP_OK) {
-          ESP_LOGE(TAG, "Failed to register BMS notification characteristic: %s",
-                   esp_err_to_name(err));
-          this->disconnect_pending_ = true;
-          this->parent_->disconnect();
-          break;
-        }
+      auto *service = this->parent_->get_service(BMS_SERVICE_UUID);
+      if (service == nullptr) {
+        ESP_LOGE(TAG, "BMS service 0x%04X not found", BMS_SERVICE_UUID);
+        this->poll_pending_ = false;
+        this->parent_->disconnect();
+        break;
       }
 
-      // The BLE client action layer changes its node state to ESTABLISHED at
-      // SEARCH_CMPL_EVT before this node is dispatched. The service cache is
-      // therefore available here.
-      if (this->poll_pending_)
-        this->send_bms_request_();
-      break;
+      auto *notify_char =
+          this->parent_->get_characteristic(BMS_SERVICE_UUID, BMS_NOTIFY_CHAR_UUID);
+      auto *write_char =
+          this->parent_->get_characteristic(BMS_SERVICE_UUID, BMS_WRITE_CHAR_UUID);
 
-    case ESP_GATTC_REG_FOR_NOTIFY_EVT: {
-      const uint16_t notify_on = 1;
-      const esp_err_t err = esp_ble_gattc_write_char_descr(
-          gattc_if,
-          this->parent_->get_conn_id(),
-          BMS_NOTIFY_DESC_UUID,
-          sizeof(notify_on),
-          reinterpret_cast<uint8_t *>(const_cast<uint16_t *>(&notify_on)),
-          ESP_GATT_WRITE_TYPE_RSP,
-          ESP_GATT_AUTH_REQ_NONE);
-      if (err != ESP_OK)
-        ESP_LOGW(TAG, "Failed to enable BMS notifications: %s", esp_err_to_name(err));
+      if (notify_char == nullptr || write_char == nullptr) {
+        ESP_LOGE(TAG, "BMS characteristics not found (notify=0x%04X write=0x%04X)",
+                 BMS_NOTIFY_CHAR_UUID, BMS_WRITE_CHAR_UUID);
+        this->poll_pending_ = false;
+        this->parent_->disconnect();
+        break;
+      }
+
+      auto *notify_desc =
+          this->parent_->get_descriptor(BMS_SERVICE_UUID, BMS_NOTIFY_CHAR_UUID, BMS_NOTIFY_DESC_UUID);
+
+      if (notify_desc == nullptr) {
+        ESP_LOGE(TAG, "BMS notification descriptor 0x%04X not found", BMS_NOTIFY_DESC_UUID);
+        this->poll_pending_ = false;
+        this->parent_->disconnect();
+        break;
+      }
+
+      this->notify_char_handle_ = notify_char->handle;
+      this->write_char_handle_ = write_char->handle;
+      this->notify_desc_handle_ = notify_desc->handle;
+
+      const esp_err_t err = this->parent_->register_for_notify(this->notify_char_handle_);
+      if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register for BMS notifications: %s",
+                 esp_err_to_name(err));
+        this->poll_pending_ = false;
+        this->parent_->disconnect();
+        break;
+      }
+
+      notify_enabled = true;
       break;
     }
 
+    case ESP_GATTC_REG_FOR_NOTIFY_EVT:
+      if (param->reg_for_notify.status != ESP_GATT_OK) {
+        ESP_LOGE(TAG, "BMS notification registration failed: status=%d",
+                 param->reg_for_notify.status);
+        this->poll_pending_ = false;
+        this->parent_->disconnect();
+        break;
+      }
+
+      ESP_LOGD(TAG, "BMS notification registration complete");
+
+      if (this->notify_desc_handle_ == 0) {
+        ESP_LOGE(TAG, "BMS notification descriptor handle is unavailable");
+        this->poll_pending_ = false;
+        this->parent_->disconnect();
+        break;
+      }
+
+      {
+        const uint16_t notify_on = 1;
+        const esp_err_t err = esp_ble_gattc_write_char_descr(
+            gattc_if,
+            this->parent_->get_conn_id(),
+            this->notify_desc_handle_,
+            sizeof(notify_on),
+            reinterpret_cast<uint8_t *>(const_cast<uint16_t *>(&notify_on)),
+            ESP_GATT_WRITE_TYPE_RSP,
+            ESP_GATT_AUTH_REQ_NONE);
+
+        if (err != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to enable BMS notifications: %s",
+                   esp_err_to_name(err));
+          this->poll_pending_ = false;
+          this->parent_->disconnect();
+        }
+      }
+      break;
+
+    case ESP_GATTC_WRITE_DESCR_EVT:
+      if (param->write.status != ESP_GATT_OK) {
+        ESP_LOGE(TAG, "BMS notification descriptor write failed: status=%d",
+                 param->write.status);
+        this->poll_pending_ = false;
+        this->parent_->disconnect();
+        break;
+      }
+
+      ESP_LOGD(TAG, "BMS notifications enabled");
+
+      // The node does not report ESTABLISHED until all operations that use
+      // the GATT cache have completed. ESPHome can then safely release the
+      // service cache.
+      this->node_state = espbt::ClientState::ESTABLISHED;
+
+      this->send_bms_request_();
+      break;
+
     case ESP_GATTC_NOTIFY_EVT: {
       auto &notify = param->notify;
+
+      if (notify.handle != this->notify_char_handle_) {
+        ESP_LOGD(TAG, "Ignoring notification from unexpected handle 0x%04X",
+                 notify.handle);
+        break;
+      }
+
+      if (notify.value_len == 0) {
+        ESP_LOGW(TAG, "Ignoring empty BMS notification");
+        break;
+      }
+
       ESP_LOGD(TAG, "BMS notification: %u bytes", (unsigned) notify.value_len);
-      rx_buffer.insert(rx_buffer.end(), notify.value, notify.value + notify.value_len);
+
+      rx_buffer.insert(
+          rx_buffer.end(),
+          notify.value,
+          notify.value + notify.value_len);
+
       last_rx_ms = millis();
       break;
     }
