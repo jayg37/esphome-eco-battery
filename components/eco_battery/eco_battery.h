@@ -53,6 +53,7 @@ class EcoBattery
     uint32_t poll_started_ms_{0};
     uint32_t debug_last_loop_log_ms_{0};
     uint32_t debug_loop_count_{0};
+    bool debug_first_loop_logged_{false};
 
     bool poll_pending_{false};
     bool poll_active_{false};
