@@ -159,11 +159,10 @@ void EcoBattery::loop() {
     if (this->parent_->connected()) {
       ESP_LOGW(TAG, "BMS already connected at poll time; using existing connection");
       this->poll_pending_ = true;
-      this->response_received_ = false;
       return;
     }
 
-    if (this->parent_->state() == espbt::ClientState::IDLE) {
+    if (this->parent_->state() == ble_client::espbt::ClientState::IDLE) {
       ESP_LOGI(TAG, "Poll due; connecting to Eco Battery BMS");
       this->poll_pending_ = true;
       this->response_received_ = false;
@@ -381,7 +380,7 @@ void EcoBattery::gattc_event_handler(
       // The node does not report ESTABLISHED until all operations that use
       // the GATT cache have completed. ESPHome can then safely release the
       // service cache.
-      this->node_state = espbt::ClientState::ESTABLISHED;
+      this->node_state = ble_client::espbt::ClientState::ESTABLISHED;
 
       this->send_bms_request_();
       break;
@@ -412,8 +411,9 @@ void EcoBattery::gattc_event_handler(
     }
 
     case ESP_GATTC_WRITE_CHAR_EVT:
-      if (this->poll_active_)
+      if (this->poll_active_) {
         ESP_LOGD(TAG, "BMS request write acknowledged");
+      }
       break;
 
     default:
