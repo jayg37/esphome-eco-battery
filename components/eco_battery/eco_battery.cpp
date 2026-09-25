@@ -384,33 +384,10 @@ void EcoBattery::gattc_event_handler(
         break;
       }
 
-      ESP_LOGI(TAG, "GATT EVENT: notification registration complete");
-
-      if (this->notify_desc_handle_ == 0) {
-        ESP_LOGE(TAG, "BMS notification descriptor handle is unavailable");
-        this->poll_pending_ = false;
-        this->parent_->disconnect();
-        break;
-      }
-
-      {
-        const uint16_t notify_on = 1;
-        const esp_err_t err = esp_ble_gattc_write_char_descr(
-            gattc_if,
-            this->parent_->get_conn_id(),
-            this->notify_desc_handle_,
-            sizeof(notify_on),
-            reinterpret_cast<uint8_t *>(const_cast<uint16_t *>(&notify_on)),
-            ESP_GATT_WRITE_TYPE_RSP,
-            ESP_GATT_AUTH_REQ_NONE);
-
-        if (err != ESP_OK) {
-          ESP_LOGE(TAG, "Failed to enable BMS notifications: %s",
-                   esp_err_to_name(err));
-          this->poll_pending_ = false;
-          this->parent_->disconnect();
-        }
-      }
+      // ESPHome's BLEClientBase handles the CCCD write automatically after
+      // register_for_notify() succeeds. Do not write the CCCD a second time here,
+      // because that causes duplicate WRITE_DESCR events and duplicate BMS polls.
+      ESP_LOGI(TAG, "GATT EVENT: notification registration complete; waiting for ESPHome CCCD write");
       break;
 
     case ESP_GATTC_WRITE_DESCR_EVT:
