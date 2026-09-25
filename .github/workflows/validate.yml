@@ -32,3 +32,5 @@ jobs:
 
       - name: Compile against ESPHome 2026.9.0
         run: esphome compile /config/esphome/golf-cart-battery.yaml
+
+# Validation runs on the development PR as it is updated.
