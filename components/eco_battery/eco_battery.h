@@ -16,42 +16,18 @@ class EcoBattery
     void setup() override;
     void loop() override;
 
-    void set_soc_sensor(sensor::Sensor *sensor) {
-        this->soc_sensor_ = sensor;
-    }
-    void set_voltage_sensor(sensor::Sensor *sensor) {
-        this->voltage_sensor_ = sensor;
-    }
-    void set_mos_temp_sensor(sensor::Sensor *sensor) {
-        this->mos_temp_sensor_ = sensor;
-    }
-    void set_cell_temp_sensor(sensor::Sensor *sensor) {
-        this->cell_temp_sensor_ = sensor;
-    }
-    void set_current_sensor(sensor::Sensor *sensor) {
-        this->current_sensor_ = sensor;
-    }
-    void set_max_cell_voltage_sensor(sensor::Sensor *sensor) {
-        this->max_cell_voltage_sensor_ = sensor;
-    }
-    void set_min_cell_voltage_sensor(sensor::Sensor *sensor) {
-        this->min_cell_voltage_sensor_ = sensor;
-    }
-    void set_cell_delta_sensor(sensor::Sensor *sensor) {
-        this->cell_delta_sensor_ = sensor;
-    }
-    void set_cell_count_sensor(sensor::Sensor *sensor) {
-        this->cell_count_sensor_ = sensor;
-    }
-    void set_temp_probe1_sensor(sensor::Sensor *sensor) {
-        this->temp_probe1_sensor_ = sensor;
-    }
-    void set_temp_probe2_sensor(sensor::Sensor *sensor) {
-        this->temp_probe2_sensor_ = sensor;
-    }
-    void set_temp_probe3_sensor(sensor::Sensor *sensor) {
-        this->temp_probe3_sensor_ = sensor;
-    }
+    void set_soc_sensor(sensor::Sensor *sensor) { this->soc_sensor_ = sensor; }
+    void set_voltage_sensor(sensor::Sensor *sensor) { this->voltage_sensor_ = sensor; }
+    void set_mos_temp_sensor(sensor::Sensor *sensor) { this->mos_temp_sensor_ = sensor; }
+    void set_cell_temp_sensor(sensor::Sensor *sensor) { this->cell_temp_sensor_ = sensor; }
+    void set_current_sensor(sensor::Sensor *sensor) { this->current_sensor_ = sensor; }
+    void set_max_cell_voltage_sensor(sensor::Sensor *sensor) { this->max_cell_voltage_sensor_ = sensor; }
+    void set_min_cell_voltage_sensor(sensor::Sensor *sensor) { this->min_cell_voltage_sensor_ = sensor; }
+    void set_cell_delta_sensor(sensor::Sensor *sensor) { this->cell_delta_sensor_ = sensor; }
+    void set_cell_count_sensor(sensor::Sensor *sensor) { this->cell_count_sensor_ = sensor; }
+    void set_temp_probe1_sensor(sensor::Sensor *sensor) { this->temp_probe1_sensor_ = sensor; }
+    void set_temp_probe2_sensor(sensor::Sensor *sensor) { this->temp_probe2_sensor_ = sensor; }
+    void set_temp_probe3_sensor(sensor::Sensor *sensor) { this->temp_probe3_sensor_ = sensor; }
 
     void set_update_interval(uint32_t interval_ms) {
         this->update_interval_ms_ = interval_ms;
@@ -73,10 +49,15 @@ class EcoBattery
 
     uint32_t update_interval_ms_{600000};
     uint32_t last_poll_{0};
+    uint32_t poll_started_ms_{0};
 
     bool poll_pending_{false};
     bool poll_active_{false};
     bool disconnect_pending_{false};
+
+    uint16_t write_char_handle_{0};
+    uint16_t notify_char_handle_{0};
+    uint16_t notify_desc_handle_{0};
 
     binary_sensor::BinarySensor *connected_sensor_{nullptr};
 
