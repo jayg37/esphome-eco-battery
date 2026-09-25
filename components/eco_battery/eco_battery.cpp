@@ -42,8 +42,6 @@ void EcoBattery::setup() {
 void EcoBattery::loop() {
   const uint32_t now = millis();
 
-  // If a poll is active but no complete response arrives, don't leave the
-  // BLE client connected indefinitely.
   if (this->poll_active_ && this->poll_started_ms_ != 0 &&
       (now - this->poll_started_ms_) > RESPONSE_TIMEOUT_MS) {
     ESP_LOGW(TAG, "BMS response timeout after %u ms; disconnecting",
@@ -57,8 +55,6 @@ void EcoBattery::loop() {
     return;
   }
 
-  // Wait for the notification stream to go quiet before treating the
-  // fragmented notifications as one complete response.
   if (!rx_buffer.empty() && (now - last_rx_ms) > 100) {
     if (rx_buffer.size() < BMS_FRAME_SIZE) {
       ESP_LOGW(TAG, "Incomplete BMS response: received %u bytes, expected at least %u",
@@ -146,7 +142,6 @@ void EcoBattery::loop() {
     }
   }
 
-  // Start a new poll only when the configured interval expires.
   if (!this->poll_pending_ && !this->poll_active_ &&
       (now - this->last_poll_) >= this->update_interval_ms_) {
     this->last_poll_ = now;
@@ -165,12 +160,10 @@ void EcoBattery::loop() {
     if (this->parent_->state() == ble_client::espbt::ClientState::IDLE) {
       ESP_LOGI(TAG, "Poll due; connecting to Eco Battery BMS");
       this->poll_pending_ = true;
-      this->response_received_ = false;
       this->parent_->connect();
     } else {
       ESP_LOGD(TAG, "Poll due but BLE client is in %s; retrying next interval",
-               espbt::client_state_to_string(this->parent_->state()));
-      // Give the client another chance on the next normal interval.
+               ble_client::espbt::client_state_to_string(this->parent_->state()));
       this->last_poll_ = now;
     }
   }
@@ -377,9 +370,6 @@ void EcoBattery::gattc_event_handler(
 
       ESP_LOGD(TAG, "BMS notifications enabled");
 
-      // The node does not report ESTABLISHED until all operations that use
-      // the GATT cache have completed. ESPHome can then safely release the
-      // service cache.
       this->node_state = ble_client::espbt::ClientState::ESTABLISHED;
 
       this->send_bms_request_();
