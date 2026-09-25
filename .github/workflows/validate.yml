@@ -1,0 +1,34 @@
+name: ESPHome Validation
+
+on:
+  push:
+    branches:
+      - main
+      - dev/**
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    container:
+      image: esphome/esphome:2026.9.0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare ESPHome config
+        run: |
+          mkdir -p /config/esphome
+          cp -r components /config/esphome/
+          cp examples/golf-cart-battery.yaml /config/esphome/golf-cart-battery.yaml
+          cat > /config/esphome/secrets.yaml <<'EOF'
+          wifi_ssid: validation
+          wifi_password: validation-password
+          EOF
+          sed -i 's|path: /config/esphome/components|path: /config/esphome/components|' /config/esphome/golf-cart-battery.yaml
+
+      - name: Compile against ESPHome 2026.9.0
+        run: esphome compile /config/esphome/golf-cart-battery.yaml
