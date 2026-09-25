@@ -11,7 +11,6 @@ static const char *const TAG = "eco_battery";
 static constexpr uint16_t BMS_SERVICE_UUID = 0xFF00;
 static constexpr uint16_t BMS_NOTIFY_CHAR_UUID = 0x0011;
 static constexpr uint16_t BMS_WRITE_CHAR_UUID = 0x0014;
-static constexpr uint16_t BMS_NOTIFY_DESC_UUID = 0x0012;
 
 static constexpr size_t BMS_REGISTER_COUNT = 122;
 static constexpr size_t BMS_FRAME_SIZE = 3 + (BMS_REGISTER_COUNT * 2);
@@ -75,7 +74,7 @@ void EcoBattery::loop() {
     if (this->parent_ == nullptr) {
       ESP_LOGI(TAG, "LOOP: FIRST PASS count=%u parent=NULL", (unsigned) this->debug_loop_count_);
     } else {
-      ESP_LOGI(TAG, "LOOP: FIRST PASS count=%u state=%s connected=%s interval=%u ms", 
+      ESP_LOGI(TAG, "LOOP: FIRST PASS count=%u state=%s connected=%s interval=%u ms",
                (unsigned) this->debug_loop_count_,
                ble_client::espbt::client_state_to_string(this->parent_->state()),
                this->parent_->connected() ? "YES" : "NO",
@@ -339,13 +338,13 @@ void EcoBattery::gattc_event_handler(
         break;
       }
 
-      auto *notify_desc =
-          this->parent_->get_descriptor(BMS_SERVICE_UUID, BMS_NOTIFY_CHAR_UUID, BMS_NOTIFY_DESC_UUID);
+      auto *notify_desc = this->parent_->get_config_descriptor(notify_char->handle);
 
       ESP_LOGD(TAG, "DISCOVERY: notification descriptor lookup result=%s",
                notify_desc != nullptr ? "FOUND" : "MISSING");
       if (notify_desc == nullptr) {
-        ESP_LOGE(TAG, "BMS notification descriptor 0x%04X not found", BMS_NOTIFY_DESC_UUID);
+        ESP_LOGE(TAG, "BMS notification configuration descriptor not found for notify handle 0x%04X",
+                 notify_char->handle);
         this->poll_pending_ = false;
         this->parent_->disconnect();
         break;
