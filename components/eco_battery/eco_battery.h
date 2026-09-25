@@ -77,7 +77,6 @@ class EcoBattery
     bool poll_pending_{false};
     bool poll_active_{false};
     bool disconnect_pending_{false};
-    bool response_received_{false};
 
     binary_sensor::BinarySensor *connected_sensor_{nullptr};
 
