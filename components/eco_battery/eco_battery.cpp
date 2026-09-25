@@ -51,6 +51,7 @@ void EcoBattery::setup() {
   this->notify_desc_handle_ = 0;
   this->debug_last_loop_log_ms_ = millis();
   this->debug_loop_count_ = 0;
+  this->debug_first_loop_logged_ = false;
 
   ESP_LOGI(TAG, "SETUP: EcoBattery initialized (interval=%u ms)",
            (unsigned) this->update_interval_ms_);
@@ -67,8 +68,21 @@ void EcoBattery::loop() {
   const uint32_t now = millis();
   this->debug_loop_count_++;
 
-  // Throttled lifecycle heartbeat. This is intentionally INFO-level so a field
-  // log immediately shows whether EcoBattery::loop() is actually running.
+  // First-loop proof plus a throttled lifecycle heartbeat. INFO-level is intentional
+  // so a field log immediately proves whether EcoBattery::loop() is actually running.
+  if (!this->debug_first_loop_logged_) {
+    this->debug_first_loop_logged_ = true;
+    if (this->parent_ == nullptr) {
+      ESP_LOGI(TAG, "LOOP: FIRST PASS count=%u parent=NULL", (unsigned) this->debug_loop_count_);
+    } else {
+      ESP_LOGI(TAG, "LOOP: FIRST PASS count=%u state=%s connected=%s interval=%u ms", 
+               (unsigned) this->debug_loop_count_,
+               ble_client::espbt::client_state_to_string(this->parent_->state()),
+               this->parent_->connected() ? "YES" : "NO",
+               (unsigned) this->update_interval_ms_);
+    }
+  }
+
   if ((now - this->debug_last_loop_log_ms_) >= 30000) {
     this->debug_last_loop_log_ms_ = now;
     if (this->parent_ == nullptr) {
