@@ -15,6 +15,7 @@ class EcoBattery
  public:
     void setup() override;
     void loop() override;
+    void dump_config() override;
 
     void set_soc_sensor(sensor::Sensor *sensor) { this->soc_sensor_ = sensor; }
     void set_voltage_sensor(sensor::Sensor *sensor) { this->voltage_sensor_ = sensor; }
@@ -50,6 +51,8 @@ class EcoBattery
     uint32_t update_interval_ms_{600000};
     uint32_t last_poll_{0};
     uint32_t poll_started_ms_{0};
+    uint32_t debug_last_loop_log_ms_{0};
+    uint32_t debug_loop_count_{0};
 
     bool poll_pending_{false};
     bool poll_active_{false};
