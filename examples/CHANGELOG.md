@@ -1,5 +1,8 @@
 ## Changelog
 
+### v1.2.1
+- Retains the last valid BMS sensor values while the on-demand BLE connection is intentionally disconnected.
+
 ### v1.2.0
 - Changed the BMS connection lifecycle to on-demand polling: connect, poll, then disconnect.
 - Added full-response validation before decoding the 122-register payload.
