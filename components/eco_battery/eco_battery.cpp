@@ -294,7 +294,10 @@ void EcoBattery::gattc_event_handler(
                gattc_if, param->disconnect.reason);
       if (this->connected_sensor_ != nullptr)
         this->connected_sensor_->publish_state(false);
-      this->publish_unavailable_();
+
+      // The BMS connection is intentionally closed after every successful poll.
+      // Keep the last valid sensor values while disconnected so Home Assistant
+      // does not show them as unknown between polls.
       this->poll_active_ = false;
       this->poll_pending_ = false;
       this->disconnect_pending_ = false;
