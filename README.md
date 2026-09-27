@@ -2,15 +2,9 @@
 
 ESPHome BLE component for Eco Battery LiFePO4 golf cart batteries.
 
-## Development status
-
-The public main branch is the stable published version. Experimental changes are developed and field-tested on a separate branch before being proposed for merge.
-
-Current development work is in pull request #1.
-
 ## BLE connection behavior
 
-The development version changes the BMS connection lifecycle from a persistent GATT connection to an on-demand poll:
+The current release uses an on-demand BMS polling lifecycle rather than a persistent GATT connection:
 
 1. Wait for the configured update interval.
 2. Connect to the Eco Battery BMS.
@@ -23,31 +17,27 @@ The development version changes the BMS connection lifecycle from a persistent G
 
 This keeps the existing register map and Modbus request while avoiding a permanent GATT session.
 
-The default update interval remains 10min. This is intentionally conservative for the first field-testing phase because the existing implementation was already proven to decode the BMS correctly at that interval.
+The default update interval is 10min.
 
 ## Reliability improvements
 
-The development branch also:
-
 - Validates that a response contains the full 122-register payload before decoding.
-- Uses the service UUID plus characteristic UUID to locate the write characteristic.
-- Logs poll start, request writes, notification sizes, response completion, and disconnect behavior.
-- Disconnects cleanly after a successful response or an incomplete/failed poll.
-- Uses ESPHome 2026.9's BLEClient connect() and disconnect() lifecycle.
-- Uses BLEClient::register_for_notify() rather than directly issuing the registration call, so ESPHome can correctly track pending notification registrations.
+- Uses BLEClient service and characteristic discovery.
+- Uses ESPHome BLEClient notification registration and lifecycle APIs.
+- Disconnects after each completed poll.
+- Retains the last valid BMS sensor values while the BLE client is intentionally disconnected.
+- Handles incomplete and failed polls without treating a normal intentional disconnect as a sensor failure.
 
 ## Installation
 
-Use the stable main branch for normal/public installations.
-
-For field testing, pin external_components to the development branch:
+Use the stable main branch for public installations:
 
 ```yaml
 external_components:
   - source:
       type: git
       url: https://github.com/jayg37/esphome-eco-battery
-      ref: dev/connection-lifecycle
+      ref: main
 ```
 
 ## Example test configuration
