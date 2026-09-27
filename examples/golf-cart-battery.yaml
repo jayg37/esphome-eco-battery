@@ -6,18 +6,23 @@ esphome:
 
 external_components:
   - source:
-      type: local
-      path: /config/esphome/components
+      type: git
+      url: https://github.com/jayg37/esphome-eco-battery
+      ref: c1f96c2e8f6dda1b38ea1dddd537ad7a2c2d7a46
+    components: [eco_battery]
 
 esp32:
-  board: esp32-s3-devkitc-1
+  board: esp32dev
+  #board: esp32-s3-devkitc-1
   framework:
     type: esp-idf
 
 logger:
-  level: WARN
+    level: DEBUG
 
 api:
+  encryption:
+    key: pLFz9SFMWPBFIVqT1jjD3XhLRm5xGcRF8FXxds2Guvg=
 
 ota:
   - platform: esphome
@@ -29,13 +34,13 @@ wifi:
 esp32_ble_tracker:
 
 ble_client:
-  - mac_address: 10:23:81:BC:04:87 #Update MAC address to your ESPdevice MAC
+  - mac_address: 10:23:81:BC:04:87
     id: eco_battery_client
     auto_connect: false
 
 eco_battery:
   ble_client_id: eco_battery_client
-  update_interval: 30s
+  update_interval: 10min
   connected_sensor: eco_connected
   soc_sensor: eco_soc
   voltage_sensor: eco_voltage
